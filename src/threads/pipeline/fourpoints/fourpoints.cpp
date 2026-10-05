@@ -99,9 +99,11 @@ bool Pipeline::fourpoints(std::shared_ptr<rm::Frame> frame) {
         // 如果检测到的装甲板不是四个点，跳过
         if(yolo_rect.four_points.size() != 4) continue;
 
-        // 根据推理结果设置装甲板ID
+        // 根据推理结果设置装甲板ID与颜色
         rm::ArmorID armor_id = (rm::ArmorID)armor_class_map[yolo_rect.class_id];
-        rm::ArmorColor armor_color = (rm::ArmorColor)armor_class_map[yolo_rect.color_id];
+        // 原实现误用 armor_class_map 查颜色：九类模型下 ClassMap=[0,1,2,3,4,5,6,6,6]
+        // 与 ColorMap=[1,0,2,3] 不一致，红蓝会颠倒/越界。颜色必须走 ColorMap。
+        rm::ArmorColor armor_color = (rm::ArmorColor)armor_color_map[yolo_rect.color_id];
 
         // 创建装甲板对象并设置参数
         rm::Armor armor;
@@ -141,7 +143,7 @@ bool Pipeline::fourpoints(std::shared_ptr<rm::Frame> frame) {
                 Data::camera[frame->camera_id]->intrinsic_matrix,
                 Data::camera[frame->camera_id]->distortion_coeffs,
                 rvec, tvec, false, cv::SOLVEPNP_EPNP);
-        } catch (cv::Exception& e) {
+        } catch (const cv::Exception& e) {
             rm::message("solvePnP error", rm::MSG_ERROR);
             continue;
         }

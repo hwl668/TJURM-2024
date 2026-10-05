@@ -78,7 +78,23 @@ fire = (fire && start_delay_flag && autoaim_flag && Data::auto_fire);
 可确认是复制粘贴笔误）。R 被放大 1e3 倍意味着滤波器几乎不信观测，
 小陀螺转速估计严重滞后，直接影响 antitop 开火时机与预测精度。已改用 `antitopOmegaR[0]`。
 
-### 3.4 顺手清理
+### 3.4 fourpoints 流水线颜色映射表用错（`fourpoints.cpp`）
+
+原实现 `armor_color = (rm::ArmorColor)armor_class_map[yolo_rect.color_id]` ——
+颜色查的是**类别表**。配置中 `ClassMap=[0,1,2,3,4,5,6,6,6]` 与
+`ColorMap=[1,0,2,3]` 并不一致，九类模型下红/蓝直接颠倒或越界，
+进而选错装甲板 3D 尺寸、PnP 距离与位姿全错。已改用 `armor_color_map`。
+（对照 baseline 的 `pointer.cpp` 可确认两表应各司其职。）
+
+### 3.5 其他修复
+
+- `rune/tracker_thread.cpp`：与 baseline 相同的 `tp0` 未初始化入队、
+  `1.0/getAvg()` 零除、`catch` 非 const 引用——统一修复；
+- `fourpoints.cpp`：`catch` 非 const 引用修复；
+- `CMakeLists.txt`：尊重外部 `-DCMAKE_BUILD_TYPE`（原实现无条件覆盖为 DEBUG，
+  导致无法用 Release 出性能包），并补 `CMAKE_CXX_STANDARD_REQUIRED`。
+
+### 3.6 顺手清理
 
 `locater()` 中 `curr_size` 的冗余自赋值分支合并为三元式；未使用的 `pose_head`
 等声明移除；标准库 include 归位。

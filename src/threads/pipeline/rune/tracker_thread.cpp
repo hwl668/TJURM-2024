@@ -32,6 +32,7 @@ void Pipeline::tracker_rune_thread(
 
     rm::CycleQueue<double> delay_list(100);
     TimePoint tp0, tp1, tp2;
+    tp0 = getTime();  // 初始化时间基准，避免首帧把自纪元秒数灌进延迟队列
 
     std::mutex mutex;
     while (true) {
@@ -75,7 +76,7 @@ void Pipeline::tracker_rune_thread(
                     Data::camera[frame->camera_id]->intrinsic_matrix,
                     Data::camera[frame->camera_id]->distortion_coeffs,
                     rvec, tvec, false, cv::SOLVEPNP_EPNP);
-            } catch (cv::Exception& e) {
+            } catch (const cv::Exception& e) {
                 rm::message("solvePnP error", rm::MSG_ERROR);
                 continue;
             }
@@ -114,7 +115,8 @@ void Pipeline::tracker_rune_thread(
         
         delay_list.push(getDoubleOfS(tp0, tp2));
         tp0 = tp2;
-        double fps = 1.0 / delay_list.getAvg();
+        const double avg_delay = delay_list.getAvg();
+        const double fps = (avg_delay > 1e-6) ? 1.0 / avg_delay : 0.0;
         rm::message("fps", fps);
 
         if (Data::imshow_flag) {
