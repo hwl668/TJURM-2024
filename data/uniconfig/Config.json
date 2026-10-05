@@ -60,6 +60,10 @@
 
         "StartFireDelay" : 0.05,
 
+        "FireYawTolDeg" : 1.0,
+        "FirePitchTolDeg" : 1.0,
+        "FireConfirmNum" : 2,
+
         "OffsetDef" : ["X", "Y", "Z", "Yaw", "Pitch"],
         "AxisOffset" :  [0.0, 0.0, 0.0],
         "BarrelOffset" : [0.0, 0.0, 0.0, 0.0, 0.0],

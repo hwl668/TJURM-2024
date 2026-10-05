@@ -17,6 +17,17 @@ static double target_yaw, target_pitch, fly_delay, delay;
 static double rotate_delay, rotate_delay_outpost, rotate_delay_rune;
 static Eigen::Vector4d pose;
 
+// 火控误差门限（学习 rm_vision / FYT2024_vision 的火控逻辑）
+static double fire_yaw_tol, fire_pitch_tol;  // 双轴误差容差（弧度）
+static int fire_confirm_num;                 // 需连续满足误差门限的帧数（消抖）
+static int confirm_cnt = 0;
+
+static double normalize_angle(double a) {
+    while (a > M_PI)  a -= 2.0 * M_PI;
+    while (a < -M_PI) a += 2.0 * M_PI;
+    return a;
+}
+
 static TimePoint start_autoaim;
 static bool last_autoaim = false;
 
@@ -34,6 +45,10 @@ static void init_send() {
     rotate_delay_outpost = (*param)["Car"]["RotateDelayOutpost"];
     rotate_delay_rune = (*param)["Car"]["RotateDelayRune"];
     start_fire_delay = (*param)["Car"]["StartFireDelay"];
+    // 缺键时走默认值（.value 不抛异常），老配置文件无需手动迁移
+    fire_yaw_tol  = (*param)["Car"].value("FireYawTolDeg", 1.0) * M_PI / 180.0;
+    fire_pitch_tol = (*param)["Car"].value("FirePitchTolDeg", 1.0) * M_PI / 180.0;
+    fire_confirm_num = (*param)["Car"].value("FireConfirmNum", 2);
     iteration_num = (*param)["Kalman"]["IterationNum"];
     base_to_far_dist = (*param)["Camera"]["Switch"]["BaseToFarDist"];
     far_to_base_dist = (*param)["Camera"]["Switch"]["FarToBaseDist"];
@@ -236,7 +251,19 @@ void Control::send_thread() {
         bool start_delay_flag = (getDoubleOfS(start_autoaim, getTime()) > start_fire_delay);
         bool autoaim_flag = get_autoaim();
 
-        fire = (fire && start_delay_flag && autoaim_flag && Data::auto_fire);
+        // 火控误差门限：解算指向与当前云台指向的双轴误差都在容差带内，
+        // 且连续 fire_confirm_num 帧满足，才允许把 fire 传给电控。
+        // yaw 归一化到 [-pi, pi] 处理跨零；误差门限每拍计算，与 auto_fire 脉冲解耦。
+        const double yaw_err = std::abs(normalize_angle(target_yaw - get_yaw()));
+        const double pitch_err = std::abs(target_pitch - get_pitch());
+        if (yaw_err < fire_yaw_tol && pitch_err < fire_pitch_tol) {
+            confirm_cnt = std::min(confirm_cnt + 1, fire_confirm_num);
+        } else {
+            confirm_cnt = 0;
+        }
+
+        fire = (fire && start_delay_flag && autoaim_flag && Data::auto_fire
+                && confirm_cnt >= fire_confirm_num);
         send_single(target_yaw, target_pitch, fire, Data::target_id);
     }
 }
