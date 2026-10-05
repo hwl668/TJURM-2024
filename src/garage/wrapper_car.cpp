@@ -56,7 +56,9 @@ WrapperCar::WrapperCar(ArmorID id) : ObjInterface(id) {
     antitop_4_->setCenterMatrixR(antitopCenterR[0], antitopCenterR[1]);
 
     antitop_4_->setOmegaMatrixQ(antitopOmegaQ[0], antitopOmegaQ[1], antitopOmegaQ[2]);
-    antitop_4_->setOmegaMatrixR(antitopOmegaQ[0]);
+    // 原实现误写为 antitopOmegaQ[0]（=1e1）：R 被放大 1e3 倍，角速度滤波
+    // 严重滞后。OmegaR 配置值为 1e-2。
+    antitop_4_->setOmegaMatrixR(antitopOmegaR[0]);
     
     if (id_ == rm::ARMOR_ID_HERO)
         antitop_4_->setFireValue(antitop_fire_update, antitop_fire_delay, antitop_fire_angle, antitop_fire_angle_big_);

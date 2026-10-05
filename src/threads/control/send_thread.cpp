@@ -18,7 +18,8 @@ static double rotate_delay, rotate_delay_outpost, rotate_delay_rune;
 static Eigen::Vector4d pose;
 
 // 火控误差门限（学习 rm_vision / FYT2024_vision 的火控逻辑）
-static double fire_yaw_tol, fire_pitch_tol;  // 双轴误差容差（弧度）
+static double fire_yaw_tol, fire_pitch_tol;  // 进入容差（弧度）
+static double fire_yaw_exit, fire_pitch_exit; // 退出容差 = 进入 × 滞回比（防边界抖动）
 static int fire_confirm_num;                 // 需连续满足误差门限的帧数（消抖）
 static int confirm_cnt = 0;
 
@@ -48,6 +49,9 @@ static void init_send() {
     // 缺键时走默认值（.value 不抛异常），老配置文件无需手动迁移
     fire_yaw_tol  = (*param)["Car"].value("FireYawTolDeg", 1.0) * M_PI / 180.0;
     fire_pitch_tol = (*param)["Car"].value("FirePitchTolDeg", 1.0) * M_PI / 180.0;
+    const double fire_exit_ratio = (*param)["Car"].value("FireExitRatio", 1.5);
+    fire_yaw_exit = fire_yaw_tol * fire_exit_ratio;
+    fire_pitch_exit = fire_pitch_tol * fire_exit_ratio;
     fire_confirm_num = (*param)["Car"].value("FireConfirmNum", 2);
     iteration_num = (*param)["Kalman"]["IterationNum"];
     base_to_far_dist = (*param)["Camera"]["Switch"]["BaseToFarDist"];
@@ -251,12 +255,15 @@ void Control::send_thread() {
         bool start_delay_flag = (getDoubleOfS(start_autoaim, getTime()) > start_fire_delay);
         bool autoaim_flag = get_autoaim();
 
-        // 火控误差门限：解算指向与当前云台指向的双轴误差都在容差带内，
-        // 且连续 fire_confirm_num 帧满足，才允许把 fire 传给电控。
-        // yaw 归一化到 [-pi, pi] 处理跨零；误差门限每拍计算，与 auto_fire 脉冲解耦。
+        // 火控误差门限（带滞回）：解算指向与云台指向的双轴误差进入容差带，
+        // 且连续 fire_confirm_num 帧满足才允许开火；已确认后退出容差放宽
+        // FireExitRatio 倍——误差在门限边界抖动时 fire 不会高频震荡。
+        // yaw 归一化到 [-pi, pi] 处理跨零；门限每拍计算，与 auto_fire 脉冲解耦。
+        const double yaw_tol = (confirm_cnt >= fire_confirm_num) ? fire_yaw_exit : fire_yaw_tol;
+        const double pitch_tol = (confirm_cnt >= fire_confirm_num) ? fire_pitch_exit : fire_pitch_tol;
         const double yaw_err = std::abs(normalize_angle(target_yaw - get_yaw()));
         const double pitch_err = std::abs(target_pitch - get_pitch());
-        if (yaw_err < fire_yaw_tol && pitch_err < fire_pitch_tol) {
+        if (yaw_err < yaw_tol && pitch_err < pitch_tol) {
             confirm_cnt = std::min(confirm_cnt + 1, fire_confirm_num);
         } else {
             confirm_cnt = 0;

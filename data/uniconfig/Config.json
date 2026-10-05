@@ -63,6 +63,7 @@
         "FireYawTolDeg" : 1.0,
         "FirePitchTolDeg" : 1.0,
         "FireConfirmNum" : 2,
+        "FireExitRatio" : 1.5,
 
         "OffsetDef" : ["X", "Y", "Z", "Yaw", "Pitch"],
         "AxisOffset" :  [0.0, 0.0, 0.0],

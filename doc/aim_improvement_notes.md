@@ -29,18 +29,25 @@ fire = (fire && start_delay_flag && autoaim_flag && Data::auto_fire);
 或解算值与机械指向有偏差时，只要其他条件满足就会发出开火指令。
 这是 rm_vision / FYT / rmdecis 等所有参考实现里都有的标准环节。
 
+另外，静态审查还发现反陀螺角速度滤波器的观测噪声 R 被误设为过程噪声 Q 的值
+（相差 3 个数量级，见 3.4）。
+
 ## 三、本次已落地
 
-### 3.1 火控误差门限（`Control::send_thread()`，配置见 `Config.json → Car`）
+### 3.1 火控误差门限 + 连续确认 + 滞回（`Control::send_thread()`）
 
-1. **双轴误差门限**：`yaw_err = normalize_angle(target_yaw - get_yaw())`、
-   `pitch_err = target_pitch - get_pitch()`，都在容差内才允许开火
-   （`FireYawTolDeg` / `FirePitchTolDeg`，默认 1.0°）。
+配置见 `Config.json → Car`，三段式火控：
+
+1. **进门限**：`yaw_err = normalize_angle(target_yaw - get_yaw())`、
+   `pitch_err = target_pitch - get_pitch()`，双轴都小于
+   `FireYawTolDeg` / `FirePitchTolDeg`（默认 1.0°）才可能开火；
 2. **连续确认**（对标 FYT 的稳定计数思想）：需连续 `FireConfirmNum` 帧（默认 2）
-   满足门限，抑制云台抖动期的单帧误判。
-3. **角度归一化**：yaw 差归一化到 [-π, π]，正确处理跨零。
-4. 误差门限每拍计算、与 `auto_fire` 脉冲解耦（脉冲是瞬时置位，确认计数不能依赖它）。
-5. 配置读取用 `json::value(key, default)`，**老配置文件缺键不崩溃**。
+   满足进门限，抑制云台抖动期的单帧误判；
+3. **滞回退出**：确认后退出容差放宽 `FireExitRatio`（默认 1.5）倍——误差在
+   门限边界抖动时 fire 不会高频震荡，避免点火毛刺；
+4. **角度归一化**：yaw 差归一化到 [-π, π]，正确处理跨零；
+5. 门限每拍计算、与 `auto_fire` 脉冲解耦（脉冲是瞬时置位，确认计数不能依赖它）；
+6. 配置读取用 `json::value(key, default)`，**老配置文件缺键不崩溃**。
 
 ### 3.2 IPPE PnP 二义性时序消歧（`Pipeline::locater()`）
 
@@ -61,12 +68,20 @@ fire = (fire && start_delay_flag && autoaim_flag && Data::auto_fire);
 4. 历史表键 = (camera_id, armor_id)，数量上界 = 相机数 × ID 数，常量级内存。
 
 预期效果：消除正对姿态附近的 yaw 翻转抖动，使 `antitop`/EKF 拿到的观测序列平稳，
-打符与小陀螺场景的预测精度直接受益。
+小陀螺场景的预测精度直接受益。
 
-### 3.3 顺手清理
+### 3.3 反陀螺角速度滤波器 R 矩阵修复（`wrapper_car.cpp`）
+
+原实现 `antitop_4_->setOmegaMatrixR(antitopOmegaQ[0])` 把**过程噪声 Q 表的值**
+（OmegaQ=[1e1,…]，即 1e1）塞给了观测噪声 R，而配置的设计值是
+`OmegaR=[1e-2]`——**差了 3 个数量级**（对照 balance 分支用的是 `BalanceOmegaR[0]`，
+可确认是复制粘贴笔误）。R 被放大 1e3 倍意味着滤波器几乎不信观测，
+小陀螺转速估计严重滞后，直接影响 antitop 开火时机与预测精度。已改用 `antitopOmegaR[0]`。
+
+### 3.4 顺手清理
 
 `locater()` 中 `curr_size` 的冗余自赋值分支合并为三元式；未使用的 `pose_head`
-等声明移除。
+等声明移除；标准库 include 归位。
 
 ## 四、未来方向（需实机验证或改 OpenRM，本次不动）
 
