@@ -31,7 +31,7 @@ fire = (fire && start_delay_flag && autoaim_flag && Data::auto_fire);
 
 ## 三、本次已落地
 
-`Control::send_thread()` 增加火控误差门限（配置驱动，见 `Config.json → Car`）：
+### 3.1 火控误差门限（`Control::send_thread()`，配置见 `Config.json → Car`）
 
 1. **双轴误差门限**：`yaw_err = normalize_angle(target_yaw - get_yaw())`、
    `pitch_err = target_pitch - get_pitch()`，都在容差内才允许开火
@@ -42,9 +42,36 @@ fire = (fire && start_delay_flag && autoaim_flag && Data::auto_fire);
 4. 误差门限每拍计算、与 `auto_fire` 脉冲解耦（脉冲是瞬时置位，确认计数不能依赖它）。
 5. 配置读取用 `json::value(key, default)`，**老配置文件缺键不崩溃**。
 
+### 3.2 IPPE PnP 二义性时序消歧（`Pipeline::locater()`）
+
+**问题**：IPPE 对平面矩形有两个镜像解。装甲板接近正对相机时两解重投影误差接近，
+`cv::solvePnP` 只返回误差较小解——但此时两解的误差差在噪声量级内，
+导致 armor yaw 随帧在 ±几十度间随机翻转（社区俗称"PnP 翻转"），污染反陀螺/EKF 输入。
+
+**强校做法**：FYT 用 BA 图优化规避；rm_vision 靠 EKF 连续性吸收。
+
+**本仓库的轻量实现**（不需要改 OpenRM、不引入新依赖）：
+
+1. `cv::solvePnPGeneric(..., SOLVEPNP_IPPE, ..., sol_errors)` 取出全部解与各自重投影误差
+   （OpenCV ≥4.0，本仓库要求 4.5.4 ✓）；
+2. 对每个解做与原来相同的坐标链变换 `pnp → head → world`，得到各解的
+   `armor_yaw_world` 与 `pose_world`；
+3. 择优：同 (camera_id, armor_id) **首次观测取重投影误差最小解**；有历史后取
+   **与上一帧 yaw 归一化距离最近的解**；
+4. 历史表键 = (camera_id, armor_id)，数量上界 = 相机数 × ID 数，常量级内存。
+
+预期效果：消除正对姿态附近的 yaw 翻转抖动，使 `antitop`/EKF 拿到的观测序列平稳，
+打符与小陀螺场景的预测精度直接受益。
+
+### 3.3 顺手清理
+
+`locater()` 中 `curr_size` 的冗余自赋值分支合并为三元式；未使用的 `pose_head`
+等声明移除。
+
 ## 四、未来方向（需实机验证或改 OpenRM，本次不动）
 
-- **BA 位姿估计 + 亚像素灯条角点修正**（FYT）：收益明确，但需要改 OpenRM 算法库；
+- **BA 位姿估计 + 亚像素灯条角点修正**（FYT）：收益比时序消歧更大，但需要改
+  OpenRM 算法库或把角点估计本地化；
 - **整车运动模型 EKF 的显式实现**（FYT motion_model / Ericsii）：本仓库的整车模型
   在 OpenRM 侧闭源细节中，建议后续按 motion_model.hpp 对照校准；
 - **连发（burst）模式与弹舱管理**（rm_vision fire_control）；

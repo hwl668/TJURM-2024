@@ -1,6 +1,10 @@
 #include "threads/pipeline.h"
 #include "garage/garage.h"
 
+#include <cmath>
+#include <map>
+#include <utility>
+
 static std::vector<cv::Point3f>* BigArmorRed3D, *SmallArmorRed3D;
 static std::vector<cv::Point3f>* BigArmorBlue3D, *SmallArmorBlue3D;
 static bool   plus_pnp_cost_image;
@@ -53,15 +57,26 @@ void Pipeline::init_locater() {
     SmallArmorBlue3D->emplace_back(smallArmorBlue_width / 2, smallArmorBlue_height / 2, 0);
 }
 
+namespace {
+
+// yaw 差归一化到 [-pi, pi]
+double normalize_angle(double a) {
+    while (a > M_PI)  a -= 2.0 * M_PI;
+    while (a < -M_PI) a += 2.0 * M_PI;
+    return a;
+}
+
+// IPPE 消歧记忆：同 (camera_id, armor_id) 上一帧的 armor yaw（world 系）。
+// 键数量上界 = 相机数 × 装甲板 ID 数，无需清理。
+std::map<std::pair<int, int>, double> last_armor_yaw;
+
+}  // namespace
+
 bool Pipeline::locater(std::shared_ptr<rm::Frame> frame) {
     auto garage = Garage::get_instance();
-    
-    cv::Mat rvec, tvec, rotate_cv;
-    std::vector<cv::Point3f> *Armor3D;
 
-    Eigen::Vector4d pose_pnp, pose_head, pose_world;
-    Eigen::Matrix3d rotate_pnp, rotate_world;
-    
+    Eigen::Vector4d pose_world;
+
     Eigen::Matrix3d rotate_pnp2head, rotate_head2world;
     Eigen::Matrix4d trans_pnp2head, trans_head2world;
 
@@ -81,10 +96,10 @@ bool Pipeline::locater(std::shared_ptr<rm::Frame> frame) {
 
         auto objptr = garage->getObj(armor.id);
         rm::ArmorSize obj_size = objptr->getArmorSize();
-        rm::ArmorSize curr_size = obj_size;
-        if (obj_size == rm::ARMOR_SIZE_UNKNOWN) curr_size = armor.size;
-        else curr_size = obj_size;
+        rm::ArmorSize curr_size =
+            (obj_size == rm::ARMOR_SIZE_UNKNOWN) ? armor.size : obj_size;
 
+        std::vector<cv::Point3f>* Armor3D = nullptr;
         if(curr_size == rm::ARMOR_SIZE_BIG_ARMOR) {
             if(armor.color == rm::ARMOR_COLOR_RED) Armor3D = BigArmorRed3D;
             else if(armor.color == rm::ARMOR_COLOR_BLUE) Armor3D = BigArmorBlue3D;
@@ -108,24 +123,64 @@ bool Pipeline::locater(std::shared_ptr<rm::Frame> frame) {
             target.pose_world = pose_world;
             
         } else {
+            // IPPE 对平面矩形存在镜像二义性：装甲板接近正对相机时，两解的
+            // 重投影误差接近，solvePnP 只返回误差较小解，yaw 会随帧随机翻转
+            // （±几十度），污染反陀螺/EKF 输入。这里用 solvePnPGeneric 取出
+            // 全部解，按“同相机同 ID 上一帧 yaw 连续性”择优：
+            //   首次观测 → 取重投影误差最小的解；
+            //   有历史   → 取与上一帧 yaw 最接近的解（正确率远高于纯误差序）。
+            std::vector<cv::Mat> sol_rvecs, sol_tvecs;
+            std::vector<float> sol_errors;
+            int sol_cnt = 0;
             try {
-                cv::solvePnP(*Armor3D, armor.four_points,
-                            Data::camera[frame->camera_id]->intrinsic_matrix,
-                            Data::camera[frame->camera_id]->distortion_coeffs,
-                            rvec, tvec, false, cv::SOLVEPNP_IPPE);
+                sol_cnt = cv::solvePnPGeneric(
+                    *Armor3D, armor.four_points,
+                    Data::camera[frame->camera_id]->intrinsic_matrix,
+                    Data::camera[frame->camera_id]->distortion_coeffs,
+                    sol_rvecs, sol_tvecs, false, cv::SOLVEPNP_IPPE,
+                    cv::noArray(), cv::noArray(), sol_errors);
             } catch (const cv::Exception& e) {
                 rm::message("solvePnP error", rm::MSG_ERROR);
                 continue;
             }
+            if (sol_cnt <= 0) continue;
 
-            cv::Rodrigues(rvec, rotate_cv);
-            rm::tf_Mat3d(rotate_cv, rotate_pnp);
-            rotate_world = rotate_head2world * rotate_pnp2head * rotate_pnp;
-            target.armor_yaw_world = rm::tf_rotation2armoryaw(rotate_world);
+            std::vector<double> sol_yaw(sol_cnt);
+            std::vector<Eigen::Vector4d> sol_pose(sol_cnt);
+            for (int i = 0; i < sol_cnt; ++i) {
+                cv::Mat rotate_cv_i;
+                cv::Rodrigues(sol_rvecs[i], rotate_cv_i);
+                Eigen::Matrix3d rotate_pnp_i;
+                rm::tf_Mat3d(rotate_cv_i, rotate_pnp_i);
+                const Eigen::Matrix3d rotate_world_i =
+                    rotate_head2world * rotate_pnp2head * rotate_pnp_i;
+                sol_yaw[i] = rm::tf_rotation2armoryaw(rotate_world_i);
 
-            rm::tf_Vec4d(tvec, pose_pnp);
-            pose_world = trans_head2world * trans_pnp2head * pose_pnp;
-            target.pose_world = pose_world;
+                Eigen::Vector4d pose_pnp_i;
+                rm::tf_Vec4d(sol_tvecs[i], pose_pnp_i);
+                sol_pose[i] = trans_head2world * trans_pnp2head * pose_pnp_i;
+            }
+
+            const std::pair<int, int> key(frame->camera_id,
+                                          static_cast<int>(armor.id));
+            auto it = last_armor_yaw.find(key);
+            int best = 0;
+            if (it != last_armor_yaw.end()) {
+                double best_d = 1e9;
+                for (int i = 0; i < sol_cnt; ++i) {
+                    const double d = std::fabs(normalize_angle(sol_yaw[i] - it->second));
+                    if (d < best_d) { best_d = d; best = i; }
+                }
+            } else {
+                double best_e = 1e9;
+                for (int i = 0; i < sol_cnt; ++i) {
+                    if (sol_errors[i] < best_e) { best_e = sol_errors[i]; best = i; }
+                }
+            }
+            last_armor_yaw[key] = sol_yaw[best];
+
+            target.armor_yaw_world = sol_yaw[best];
+            target.pose_world = sol_pose[best];
         }
         
         frame->target_list.push_back(target);
