@@ -1,6 +1,7 @@
 #ifndef RM2024_THREADS_PIPELINE_H_
 #define RM2024_THREADS_PIPELINE_H_
 
+#include <atomic>
 #include <mutex>
 #include <memory>
 #include <condition_variable>
@@ -65,7 +66,7 @@ public:
         std::mutex& mutex_in, bool& flag_in, std::shared_ptr<rm::Frame>& frame_in);
 
     void recording_thread(
-        std::mutex& mutex_in, bool& flag_in, std::shared_ptr<rm::Frame>& frame_in);
+        std::mutex& mutex_in, std::atomic<bool>& flag_in, std::shared_ptr<rm::Frame>& frame_in);
 
     void image_thread();
 
@@ -110,8 +111,9 @@ private:
     bool detector_in_over_ = false;
     bool detector_out_over_ = false;
 
-    bool imshow_in_ = false;
-    bool record_in_ = false;
+    // 跨线程旗标：无锁读写，必须为原子类型
+    std::atomic<bool> imshow_in_ = false;
+    std::atomic<bool> record_in_ = false;
 
     cudaStream_t resize_stream_;
     cudaStream_t detect_stream_;

@@ -51,6 +51,8 @@ public:
         rm::ArmorColor enemy_color = static_cast<rm::ArmorColor>(this->state_bytes_.input_data.enemy_color);
         if (enemy_color == rm::ARMOR_COLOR_BLUE) return rm::ARMOR_COLOR_RED;
         else if (enemy_color == rm::ARMOR_COLOR_RED) return rm::ARMOR_COLOR_BLUE;
+        // 串口数据未就绪（NONE 等）时必须有返回值，否则是未定义行为
+        return rm::ARMOR_COLOR_NONE;
     }
 
     char get_shoot_config() {

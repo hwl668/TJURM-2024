@@ -10,6 +10,7 @@ static double shoot_speed, shoot_delay;
 static double start_fire_delay;
 static int iteration_num;
 static double base_to_far_dist, far_to_base_dist;
+static double rotate_delay_base;  // 配置表默认值，模式切换后用于恢复
 
 static bool fire = false;
 static double target_yaw, target_pitch, fly_delay, delay;
@@ -28,7 +29,8 @@ static void init_send() {
     auto param = Param::get_instance();
     shoot_speed = (*param)["Car"]["ShootSpeed"];
     shoot_delay = (*param)["Car"]["ShootDelay"];
-    rotate_delay = (*param)["Car"]["RotateDelay"];
+    rotate_delay_base = (*param)["Car"]["RotateDelay"];
+    rotate_delay = rotate_delay_base;
     rotate_delay_outpost = (*param)["Car"]["RotateDelayOutpost"];
     rotate_delay_rune = (*param)["Car"]["RotateDelayRune"];
     start_fire_delay = (*param)["Car"]["StartFireDelay"];
@@ -124,7 +126,7 @@ void Control::state() {
     #if defined(TJURM_INFANTRY) || defined(TJURM_BALANCE)
     if (Data::rune_mode)       rotate_delay = rotate_delay_rune;
     else if (Data::state == 1) rotate_delay = rotate_delay_outpost;
-    else                       rotate_delay = rotate_delay;
+    else                       rotate_delay = rotate_delay_base;  // 原实现自赋值，默认延迟无法恢复
     #endif
 }
 

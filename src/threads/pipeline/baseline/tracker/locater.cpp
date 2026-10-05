@@ -113,7 +113,7 @@ bool Pipeline::locater(std::shared_ptr<rm::Frame> frame) {
                             Data::camera[frame->camera_id]->intrinsic_matrix,
                             Data::camera[frame->camera_id]->distortion_coeffs,
                             rvec, tvec, false, cv::SOLVEPNP_IPPE);
-            } catch (cv::Exception e) {
+            } catch (const cv::Exception& e) {
                 rm::message("solvePnP error", rm::MSG_ERROR);
                 continue;
             }

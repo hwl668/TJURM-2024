@@ -29,10 +29,16 @@ void Pipeline::image_thread() {
     int delay = 1000 / fps;
 
     while(true) {
-        while(!imshow_in_) {}
+        // 原实现是 while(!imshow_in_) {} 热旋，独占整核；改为 1ms 休眠轮询
+        if (!imshow_in_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            continue;
+        }
 
         cv::Mat image = *(this->imshow_register_->image);
-        
+        // 先清旗标再处理：空帧/类型异常的 continue 不再原地死循环刷屏
+        imshow_in_ = false;
+
         if (image.empty()) {
             std::cout << "图像为空，无法显示" << std::endl;
             continue;
@@ -57,7 +63,7 @@ void Pipeline::image_thread() {
                 cv::imshow("tjurm2024frame", resized_image);
                 cv::waitKey(1);
             }
-            
+
             if (Data::imwrite_flag) {
                 std::string path = imwrite_dir + "/" + getMsStr() + ".jpg";
                 std::vector<std::string> lines;
@@ -69,12 +75,8 @@ void Pipeline::image_thread() {
                 cv::imwrite(path, resized_image);
             }
 
-
-            imshow_in_ = false;
-            
             std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-            
         }
-        
+
     }
 }

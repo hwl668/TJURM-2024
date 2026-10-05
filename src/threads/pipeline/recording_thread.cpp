@@ -4,12 +4,13 @@
 #include <fstream>
 #include <sstream>
 void Pipeline::record(std::shared_ptr<rm::Frame> frame_record) {
+    // record() 由检测线程调用、recording_thread 消费，写入必须持锁
     std::unique_lock<std::mutex> lock(record_mutex_);
     record_register_ = frame_record;
     record_in_ = true;
 }
 
-void Pipeline::recording_thread(std::mutex& mutex_in, bool& flag_in, std::shared_ptr<rm::Frame>& frame_in) {
+void Pipeline::recording_thread(std::mutex& mutex_in, std::atomic<bool>& flag_in, std::shared_ptr<rm::Frame>& frame_in) {
     auto param = Param::get_instance();
     unsigned long long int frame_count = 0;
 

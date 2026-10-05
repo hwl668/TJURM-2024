@@ -63,6 +63,20 @@ bool init_camera() {
     // 获取相机数量
     int camera_num;
     bool flag_camera = rm::getDaHengCameraNum(camera_num);
+    // 重试清理：上一次失败的尝试可能已 new 相机对象，先按 deinit 模式释放，
+    // 避免外层 while 重试循环无限累积泄漏
+    for (size_t i = 0; i < Data::camera.size(); i++) {
+        if(Data::camera[i] == nullptr) continue;
+
+        if (Data::camera[i]->rgb_host_buffer != nullptr || Data::camera[i]->rgb_device_buffer != nullptr) {
+            rm::freeYoloCameraBuffer(Data::camera[i]->rgb_host_buffer, Data::camera[i]->rgb_device_buffer);
+            Data::camera[i]->rgb_host_buffer = nullptr;
+            Data::camera[i]->rgb_device_buffer = nullptr;
+        }
+        delete Data::camera[i];
+        Data::camera[i] = nullptr;
+        rm::closeDaHeng();
+    }
     Data::camera.clear();
     Data::camera.resize(camera_num + 1, nullptr);
     if(!flag_camera) {

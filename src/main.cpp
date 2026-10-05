@@ -33,7 +33,11 @@ int main(int argc, char** argv) {
         }
     }
     
-    while(true) if(init_camera()) break;
+    while(true) {
+        if(init_camera()) break;
+        // 相机初始化失败时退避重试，避免热旋占用整核并累积泄漏
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
 
     rm::message_init("autoaim");
     init_debug();
@@ -50,7 +54,9 @@ int main(int argc, char** argv) {
     #endif
 
     while(Data::manu_fire) {
-        std::cin.get();
+        // stdin 关闭（如守护进程拉起）时 get() 立即返回 EOF，
+        // 原实现会热旋并反复把 auto_fire 置真——存在误开火风险
+        if (std::cin.get() == EOF) break;
         Data::auto_fire = true;
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         Data::auto_fire = false;
